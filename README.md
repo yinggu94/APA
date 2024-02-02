@@ -2,27 +2,27 @@ Note: Alternative polyadenylation (APA) is ubiquitous in human genes, resulting
 
 Requirements
 The main requirements are listed below:
-Linux
-R (4.3.2)
+Linux
+R (4.3.2)
 
 The description of APA source codes
-APA_Linux
+1.APA_Linux
 The code is used for getting the matrix with PAS transcripts files as the input for single-cell APA analysis.
-APA_R
+2.APA_R
 The code is used for calculating proximal rate of each cell.
-Braincortex_mt25_dim14r0.1.R
+Braincortex_mt25_dim14r0.1.R
 The code is used for data pre-processing, snRNA-seq quality control, cells integration and annotations.
-F1.R
+3.F1.R
 The code is used for calculating and showing global APA levels in neural cells.
-F2.R
+4.F2.R
 The code is used for calculating and showing changes in global APA levels in neuronal cells following infection with SARS-COV-2.
-F4.R
+5.F4.R
 The code is used for showing genes with variational APA levels and differential expression widely affected neural function in a microRNA-dependent fashion.
-F5.R
+6.F5.R
 The code is used for finding Neurological and psychiatric disease risk genes which are significantly altered in APA following infection.
-S1.R
+7.S1.R
 The code is used for analyzing cell identity analysis by gene expression.
-S7.R
+8.S7.R
 The code is used for network to visualize the connection between the CALM1, APP, ACTB, and common neurological and psychiatric disorders.
 
 The description of APA
