@@ -1,0 +1,241 @@
+#!/usr/bin/perl
+
+$indir = "/home/data/1_fastq";
+$outdir = "/home/data/2_cellranger_result";
+$cellranger = "/home/data/software/cellranger-6.1.2/cellranger";
+$reference = "/home/data/database/cellranger_hg38";
+$thread = 10;
+
+
+chdir "$indir";
+@allsample = <Sample*>;
+chdir "$outdir";
+foreach $sample (@allsample) {
+  system "$cellranger count --id=$sample --transcriptome=$reference --fastqs=$indir/$sample --sample=$sample --localcores=$thread --localmem=64";
+}
+#!/usr/bin/perl
+
+$database = "/home/data/database/SCAPTURE";
+$workdir = "/home/data/qc/scapture/GSE159812/GSE159812_bam_file";
+$length = 150;
+$threads = 10;
+
+
+# pick the sample ID
+
+chdir "$workdir";
+@allbam = <*bam>;
+@sampleid = ();
+foreach $bam (@allbam) {
+  unless ($bam =~ /PASquant\.KeepCell/) {
+    ($sampleid = $bam) =~ s/\.bam//;
+    push @sampleid,$sampleid;
+  }
+}
+@sampleid = @sampleid[17,18];
+print "@sampleid\n";
+
+# conda activate SCAPTURE_env
+#&step1_PAScall;
+#&step2_PASmerge;
+&step3_PASquant;
+
+
+
+# run the PAScall module
+
+sub step1_PAScall {
+
+foreach $sampleid (@sampleid) {
+  system "scapture -m PAScall -a $database/SCAPTURE_annotation -g $database/genome.fa -b $sampleid.bam -l $length -o $sampleid -p $threads --polyaDB $database/KnownPASs.txt &> $sampleid.PAScall.log";
+}
+
+}
+
+
+
+# run the PASmerge module
+
+sub step2_PASmerge {
+
+open O,">ALL.exonic.peaklist";
+foreach $sampleid (@sampleid) {
+  print O "$sampleid\t$sampleid.exonic.peaks.evaluated.bed\n";
+}
+open O,">ALL.intronic.peaklist";
+foreach $sampleid (@sampleid) {
+  print O "$sampleid\t$sampleid.intronic.peaks.evaluated.bed\n";
+}
+open O,">ALL.3primeExtended.peaklist";
+foreach $sampleid (@sampleid) {
+  print O "$sampleid\t$sampleid.3primeExtended.peaks.evaluated.bed\n";
+}
+
+system "scapture -m PASmerge -o ALL.exonic --peak ALL.exonic.peaklist &> ALL.PASmerge.exonic.log";
+system "scapture -m PASmerge -o ALL.intronic --peak ALL.intronic.peaklist &> ALL.PASmerge.intronic.log";
+system "scapture -m PASmerge -o ALL.3primeExtended --peak ALL.3primeExtended.peaklist &> ALL.PASmerge.3primeExtended.log";
+
+}
+
+
+
+# run the PASquant module
+
+sub step3_PASquant {
+
+# Select PASs with positive prediction and konwn sites overlapped
+
+@files = qw(ALL.exonic.Integrated.bed ALL.intronic.Integrated.bed);
+open O,">ALL.PAS.passed.bed";
+foreach $file (@files) {
+  open I,"$file";
+  while(<I>){
+    chomp;
+    @section = split /\t/,$_;
+    if ($section[12] > 0 || $section[13] eq 'positive') {
+      @newsection = @section[0..11];
+      $newline = join "\t",@newsection;
+      print O "$newline\n";
+    }
+  }
+  close I;
+}
+close O;
+
+foreach $sampleid (@sampleid) {
+  system "scapture -m PASquant -b $sampleid.bam --celllist $sampleid\_barcodes --pas ALL.PAS.passed.bed -o $sampleid.PASquant &> $sampleid.PASquant.log";
+}
+
+}
+#!/usr/bin/perl
+
+&pas_count;
+&count_of_pas_per_gene;
+&region_count;
+
+
+sub pas_count {
+
+$scAPAtrap_dir = "/home/data/scAPAtrap";
+$SCAPTURE_dir = "/home/data/SCAPTURE";
+chdir $scAPAtrap_dir;
+@allsample = <*>;
+open O,">/home/data/compare_software/PAS_count";
+print O "sample\tscapatrap\tscapture\n";
+foreach $sample (@allsample) {
+  $count_scAPAtrap = `wc -l $scAPAtrap_dir/$sample/result/expma.tsv`;
+  chomp($count_scAPAtrap);
+  $count_scAPAtrap = $count_scAPAtrap - 1;
+  $count_SCAPTURE = `cat $SCAPTURE_dir/$sample.intronic.peaks.evaluated.bed $SCAPTURE_dir/$sample.exonic.peaks.evaluated.bed | awk \'\$13>0 || \$14==\"positive\"\' | wc -l`;
+  chomp($count_SCAPTURE);
+  print O "$sample\t$count_scAPAtrap\t$count_SCAPTURE\n"
+}
+
+}
+
+
+
+sub count_of_pas_per_gene {
+
+%trans2gene = ();
+open I,"/home/data/database/SCAPTURE/transcriptid2gene";
+while(<I>){
+  chomp;
+  my @section = split /\t/,$_;
+  if($section[0] ne 'NA' && $section[1] ne 'NA'){
+    $trans2gene{$section[0]} = $section[1];
+  }
+}
+close I;
+
+$scAPAtrap_dir = "/home/data/scAPAtrap";
+$SCAPTURE_dir = "/home/data/SCAPTURE";
+chdir $scAPAtrap_dir;
+@allsample = <*>;
+open O,">/home/data/compare_software/PAS_count_per_gene";
+print O "sample\tpas_count\tgene_count\tmethod\n";
+foreach $sample (@allsample) {
+  %gene2count = ();
+  open I,"$scAPAtrap_dir/$sample/result/pac.txt";
+  <I>;
+  while(<I>){
+    chomp;
+    my @section = split /\t/,$_;
+    if($trans2gene{$section[11]}){
+      $genename = $trans2gene{$section[11]};
+      $gene2count{$genename}++;
+    }
+  }
+  close I;
+  @gene2count = values %gene2count;
+  %pas_per_gene = ();
+  foreach $gene2count (@gene2count) {
+    $pas_per_gene{$gene2count}++;
+  }
+  while(($key,$value) = each %pas_per_gene) {
+    print O "$sample\t$key\t$value\tscAPAtrap\n";
+  }
+
+  %gene2count = ();
+  open I,"cat $SCAPTURE_dir/$sample.intronic.peaks.evaluated.bed $SCAPTURE_dir/$sample.exonic.peaks.evaluated.bed | awk \'\$13>0 || \$14==\"positive\"\' |";
+  while(<I>){
+    chomp;
+    my @section = split /\t/,$_;
+    $genename = (split /\|/,$section[3])[0];
+    $gene2count{$genename}++;
+  }
+  close I;
+  @gene2count = values %gene2count;
+  %pas_per_gene = ();
+  foreach $gene2count (@gene2count) {
+    $pas_per_gene{$gene2count}++;
+  }
+  while(($key,$value) = each %pas_per_gene) {
+    print O "$sample\t$key\t$value\tSCAPTURE\n";
+  }
+}
+
+}
+
+
+
+sub region_count {
+
+$scAPAtrap_dir = "/home/data/scAPAtrap";
+$SCAPTURE_dir = "/home/data/SCAPTURE";
+chdir $scAPAtrap_dir;
+@allsample = <*>;
+open O,">/home/data/compare_software/region_count";
+print O "region\tcount\tmethod\n";
+foreach $sample (@allsample) {
+  %region_count = ();
+  open I,"$scAPAtrap_dir/$sample/result/pac.txt";
+  <I>;
+  while(<I>){
+    chomp;
+    my @section = split /\t/,$_;
+    $region_count{$section[7]}++;
+  }
+  close I;
+}
+while(($key,$value) = each %region_count){
+  print O "$key\t$value\tscapatrap\n";
+}
+
+foreach $sample (@allsample) {
+  %region_count = ();
+  open I,"cat $SCAPTURE_dir/$sample.intronic.peaks.evaluated.bed $SCAPTURE_dir/$sample.exonic.peaks.evaluated.bed | awk \'\$13>0 || \$14==\"positive\"\' |";
+  while(<I>){
+    chomp;
+    my @section = split /\t/,$_;
+    my $region = (split /\|/,$section[3])[5];
+    $region_count{$region}++;
+  }
+  close I;
+}
+while(($key,$value) = each %region_count){
+  print O "$key\t$value\tscapture\n";
+}
+
+}
+
