@@ -1,0 +1,77 @@
+#Perform integration of snRNA data
+
+library(Seurat)
+set.seed(717)
+indir <- '/home/data/t0302052/qc/scapture/data/cellrangeroutput/BrainCortex'
+sample <- c("FC1",  "FC2",  "FC3",  "FC4",  "FC5",  "FC6",  "FC7", "CV19_FC1",  "CV19_FC2",  "CV19_FC3",  "CV19_FC4",  "CV19_FC5",  "CV19_FC6",  "CV19_FC7",  "CV19_FC8")
+information <- "/home/data/t0302052/qc/scapture/data/singlecell/data/metadata_GSE159812.csv";
+out.rds <- "/home/data/t0302052/qc/scapture/data/singlecell/result/seurat/GSE159812_snRNA_MergeData.rds"
+
+
+info <- read.csv(information,header=T)
+Brain_info <- info[15:29,]
+snRNA_sample <- list()
+for (i in 1:length(sample)) {
+  print(paste0("Processing ",sample[i]))
+  matrix_dir <- paste0(indir,'/',sample[i],'/filtered_feature_bc_matrix')
+  data <- Read10X(data.dir = matrix_dir)
+  data <- CreateSeuratObject(counts = data, project = "", min.cells = 3, min.features = 200)
+  data[["percent.mt"]] <- PercentageFeatureSet(data, pattern = "^MT-")
+  data <- subset(data, subset = nFeature_RNA > 200 & percent.mt < 25)
+  data <- NormalizeData(data, normalization.method = "LogNormalize", scale.factor = 10000)
+  data <- FindVariableFeatures(data, selection.method = "vst", nfeatures = 2000)
+  data$sample <- sample[i]
+  group <- Brain_info[which(Brain_info$Sample==sample[i]),]$Group
+  data$group <- group
+  snRNA_sample[[i]] <- data
+}
+
+merge.data <- merge(snRNA_sample[[1]], y = snRNA_sample[2:length(snRNA_sample)],add.cell.ids = sample[1:length(sample)])
+
+features <- SelectIntegrationFeatures(object.list = snRNA_sample)
+anchors <- FindIntegrationAnchors(object.list = snRNA_sample, anchor.features = features)
+merge.data <- IntegrateData(anchorset = anchors)
+DefaultAssay(merge.data) <- "integrated"
+merge.data <- ScaleData(merge.data, verbose = FALSE)
+
+DefaultAssay(merge.data) <- "integrated"
+merge.data <- RunPCA(merge.data, npcs = 30, verbose = FALSE)
+ElbowPlot(merge.data, ndims = 30)
+orig_merg.data <- merge.data
+ggsave(file = pca_plot)  
+
+merge.data <- RunUMAP(merge.data, reduction = "pca", dims = 1:20)
+merge.data <- FindNeighbors(merge.data, reduction = "pca", dims = 1:20)
+merge.data <- FindClusters(merge.data, resolution = 0.6)
+saveRDS(merge.data, file = out.rds)
+DimPlot(merge.data, reduction = "umap", label = TRUE, repel = TRUE)
+ggsave(file = cluster_plot, width = 8, height = 6)
+
+DefaultAssay(merge.data) <- "RNA"
+cluster <- unique(as.vector(Idents(merge.data)))
+cluster <- as.numeric(cluster)
+cluster <- cluster[order(cluster)]
+allmarkers <- data.frame()
+for (i in 0:length(cluster)) {
+  markers <- FindConservedMarkers(merge.data, ident.1 = i, grouping.var = "group", min.pct = 0.3, only.pos = T)
+  feature <- row.names(markers)
+  id <- rep(paste0("cluster",i), length(feature))
+  markers <- cbind(id, feature, markers)
+  allmarkers <- rbind(allmarkers, markers)
+}
+allmarkers$Control_avg_log2FC <- 2 ^ allmarkers$Control_avg_log2FC
+allmarkers$AD_avg_log2FC <- 2 ^ allmarkers$AD_avg_log2FC
+colnames(allmarkers)[c(1,2,4,9)] <- c("Cluster","Feature","Control_FoldChange","covid_FoldChange")
+
+write.table(allmarkers, file = out.allmarkers, sep = "\t", quote =F, row.names=F)
+###累积曲线统计
+ProximalRate.Cumulate <- c()
+for(i in unique(sample_PAS_PUI@meta.data$celltype) ){
+  celltype = rep(i,sum(sample_PAS_PUI@meta.data$celltype==i))
+  rate = sample_PAS_PUI@meta.data$ProximalRateMean[which(sample_PAS_PUI@meta.data$celltype==i)]
+  cellbarcode = rownames(sample_PAS_PUI@meta.data)[which(sample_PAS_PUI@meta.data$celltype==i)]
+  ProximalRate.Cumulate <- rbind(ProximalRate.Cumulate,data.frame(cellbarcode,celltype,rate))
+}
+ProximalRate.Cumulate$group <- "NA";ProximalRate.Cumulate$group <- sample_PAS_PUI@meta.data[ProximalRate.Cumulate$cellbarcode,]$group
+
+ggplot(ProximalRate.Cumulate)+stat_ecdf(aes(x=rate,color=celltype))+scale_color_manual(values = celltypecolor)+theme_classic()
